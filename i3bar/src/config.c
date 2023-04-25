@@ -13,13 +13,13 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <X11/Xlib.h>
 #include <yajl/yajl_parse.h>
 
 config_t config;
 static char *cur_key;
 static bool parsing_bindings;
 static bool parsing_tray_outputs;
+static bool parsing_padding;
 
 /*
  * Parse a key.
@@ -39,12 +39,17 @@ static int config_map_key_cb(void *params_, const unsigned char *keyVal, size_t 
         parsing_tray_outputs = true;
     }
 
+    if (strcmp(cur_key, "padding") == 0) {
+        parsing_padding = true;
+    }
+
     return 1;
 }
 
 static int config_end_array_cb(void *params_) {
     parsing_bindings = false;
     parsing_tray_outputs = false;
+    parsing_padding = false;
     return 1;
 }
 
@@ -126,31 +131,31 @@ static int config_string_cb(void *params_, const unsigned char *val, size_t _len
         }
 
         if (len == strlen("shift") && !strncmp((const char *)val, "shift", strlen("shift"))) {
-            config.modifier = ShiftMask;
+            config.modifier = XCB_MOD_MASK_SHIFT;
             return 1;
         }
         if (len == strlen("ctrl") && !strncmp((const char *)val, "ctrl", strlen("ctrl"))) {
-            config.modifier = ControlMask;
+            config.modifier = XCB_MOD_MASK_CONTROL;
             return 1;
         }
         if (len == strlen("Mod") + 1 && !strncmp((const char *)val, "Mod", strlen("Mod"))) {
             switch (val[3]) {
                 case '1':
-                    config.modifier = Mod1Mask;
+                    config.modifier = XCB_MOD_MASK_1;
                     return 1;
                 case '2':
-                    config.modifier = Mod2Mask;
+                    config.modifier = XCB_MOD_MASK_2;
                     return 1;
                 case '3':
-                    config.modifier = Mod3Mask;
+                    config.modifier = XCB_MOD_MASK_3;
                     return 1;
                 case '5':
-                    config.modifier = Mod5Mask;
+                    config.modifier = XCB_MOD_MASK_5;
                     return 1;
             }
         }
 
-        config.modifier = Mod4Mask;
+        config.modifier = XCB_MOD_MASK_4;
         return 1;
     }
 
@@ -330,8 +335,31 @@ static int config_integer_cb(void *params_, long long val) {
         return 0;
     }
 
+    if (parsing_padding) {
+        if (strcmp(cur_key, "x") == 0) {
+            DLOG("padding.x = %lld\n", val);
+            config.padding.x = (uint32_t)val;
+            return 1;
+        }
+        if (strcmp(cur_key, "y") == 0) {
+            DLOG("padding.y = %lld\n", val);
+            config.padding.y = (uint32_t)val;
+            return 1;
+        }
+        if (strcmp(cur_key, "width") == 0) {
+            DLOG("padding.width = %lld\n", val);
+            config.padding.width = (uint32_t)val;
+            return 1;
+        }
+        if (strcmp(cur_key, "height") == 0) {
+            DLOG("padding.height = %lld\n", val);
+            config.padding.height = (uint32_t)val;
+            return 1;
+        }
+    }
+
     if (!strcmp(cur_key, "bar_height")) {
-        DLOG("bar_height = %lld", val);
+        DLOG("bar_height = %lld\n", val);
         config.bar_height = (uint32_t)val;
         return 1;
     }

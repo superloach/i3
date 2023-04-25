@@ -57,12 +57,30 @@ state CRITERIA:
   ctype = 'urgent'      -> CRITERION
   ctype = 'workspace'   -> CRITERION
   ctype = 'machine'     -> CRITERION
+  ctype = 'floating_from' -> CRITERION_FROM
+  ctype = 'tiling_from'   -> CRITERION_FROM
   ctype = 'tiling', 'floating', 'all'
       -> call cmd_criteria_add($ctype, NULL); CRITERIA
   ']' -> call cmd_criteria_match_windows(); INITIAL
 
 state CRITERION:
   '=' -> CRITERION_STR
+
+state CRITERION_FROM:
+  '=' -> CRITERION_FROM_STR_START
+
+state CRITERION_FROM_STR_START:
+  '"' -> CRITERION_FROM_STR
+  kind = 'auto', 'user'
+    -> call cmd_criteria_add($ctype, $kind); CRITERIA
+
+state CRITERION_FROM_STR:
+  kind = 'auto', 'user'
+    -> CRITERION_FROM_STR_END
+
+state CRITERION_FROM_STR_END:
+  '"'
+    -> call cmd_criteria_add($ctype, $kind); CRITERIA
 
 state CRITERION_STR:
   cvalue = word
@@ -118,6 +136,29 @@ state BORDER_WIDTH:
     -> call cmd_border($border_style, -1)
   border_width = number
     -> call cmd_border($border_style, &border_width)
+
+# gaps inner|outer|horizontal|vertical|top|right|bottom|left [current] [set|plus|minus|toggle] <px>
+state GAPS:
+  type = 'inner', 'outer', 'horizontal', 'vertical', 'top', 'right', 'bottom', 'left'
+      -> GAPS_WITH_TYPE
+
+state GAPS_WITH_TYPE:
+  scope = 'current', 'all'
+      -> GAPS_WITH_SCOPE
+
+state GAPS_WITH_SCOPE:
+  mode = 'plus', 'minus', 'set', 'toggle'
+      -> GAPS_WITH_MODE
+
+state GAPS_WITH_MODE:
+  value = word
+      -> GAPS_END
+
+state GAPS_END:
+  'px'
+      ->
+  end
+      -> call cmd_gaps($type, $scope, $mode, $value)
 
 # layout default|stacked|stacking|tabbed|splitv|splith
 # layout toggle [split|all]
@@ -184,8 +225,10 @@ state FOCUS_AUTO:
       -> call cmd_focus_direction($direction)
 
 state FOCUS_OUTPUT:
-  output = string
-      -> call cmd_focus_output($output)
+  output = word
+      -> call cmd_focus_output($output); FOCUS_OUTPUT
+  end
+      -> call cmd_focus_output(NULL); INITIAL
 
 # kill [window|client]
 state KILL:
@@ -483,6 +526,8 @@ state TITLE_FORMAT:
 
 state TITLE_WINDOW_ICON:
   'padding'
+    -> TITLE_WINDOW_ICON_PADDING
+  enable = 'toggle'
     -> TITLE_WINDOW_ICON_PADDING
   enable = '1', 'yes', 'true', 'on', 'enable', 'active', '0', 'no', 'false', 'off', 'disable', 'inactive'
     -> call cmd_title_window_icon($enable, 0)

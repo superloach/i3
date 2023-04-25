@@ -209,6 +209,14 @@ Con *con_by_frame_id(xcb_window_t frame);
 Con *con_by_mark(const char *mark);
 
 /**
+ * Start from a container and traverse the transient_for linked list. Returns
+ * true if target window is found in the list. Protects againsts potential
+ * cycles.
+ *
+ */
+bool con_find_transient_for_window(Con *start, xcb_window_t target);
+
+/**
  * Returns true if and only if the given containers holds the mark.
  *
  */
@@ -363,6 +371,7 @@ void con_move_to_output(Con *con, Output *output, bool fix_coordinates);
  */
 bool con_move_to_output_name(Con *con, const char *name, bool fix_coordinates);
 
+bool con_move_to_target(Con *con, Con *target);
 /**
  * Moves the given container to the given mark.
  *
@@ -412,6 +421,14 @@ Con *con_descend_tiling_focused(Con *con);
 Con *con_descend_direction(Con *con, direction_t direction);
 
 /**
+ * Returns whether the window decoration (title bar) should be drawn into the
+ * X11 frame window of this container (default) or into the X11 frame window of
+ * the parent container (for stacked/tabbed containers).
+ *
+ */
+bool con_draw_decoration_into_frame(Con *con);
+
+/**
  * Returns a "relative" Rect which contains the amount of pixels that need to
  * be added to the original Rect to get the final position (obviously the
  * amount of pixels for normal, 1pixel and borderless are different).
@@ -442,7 +459,7 @@ int con_border_style(Con *con);
  * floating window.
  *
  */
-void con_set_border_style(Con *con, int border_style, int border_width);
+void con_set_border_style(Con *con, border_style_t border_style, int border_width);
 
 /**
  * This function changes the layout of a given container. Use it to handle
@@ -555,3 +572,9 @@ uint32_t con_rect_size_in_orientation(Con *con);
  *
  */
 void con_merge_into(Con *old, Con *new);
+
+/**
+ * Returns true if the container is within any stacked/tabbed split container.
+ *
+ */
+bool con_inside_stacked_or_tabbed(Con *con);

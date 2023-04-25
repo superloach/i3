@@ -56,10 +56,11 @@ state INITIAL:
   'ipc_kill_timeout'                       -> IPC_KILL_TIMEOUT
   'restart_state'                          -> RESTART_STATE
   'popup_during_fullscreen'                -> POPUP_DURING_FULLSCREEN
+  'tiling_drag'                            -> TILING_DRAG
   exectype = 'exec_always', 'exec'         -> EXEC
   colorclass = 'client.background'
       -> COLOR_SINGLE
-  colorclass = 'client.focused_inactive', 'client.focused', 'client.unfocused', 'client.urgent', 'client.placeholder'
+  colorclass = 'client.focused_inactive', 'client.focused_tab_title', 'client.focused', 'client.unfocused', 'client.urgent', 'client.placeholder'
       -> COLOR_BORDER
 
 # We ignore comments and 'set' lines (variables).
@@ -67,13 +68,19 @@ state IGNORE_LINE:
   line
       -> INITIAL
 
-# gaps inner|outer|horizontal|vertical|top|right|bottom|left <px>
+# gaps inner|outer|horizontal|vertical|top|right|bottom|left <gap_size>[px]
 state GAPS:
   scope = 'inner', 'outer', 'horizontal', 'vertical', 'top', 'right', 'bottom', 'left'
       -> GAPS_WITH_SCOPE
 
 state GAPS_WITH_SCOPE:
   value = number
+      -> GAPS_END
+
+state GAPS_END:
+  'px'
+      ->
+  end
       -> call cfg_gaps($workspace, $scope, &value)
 
 # smart_borders true|false
@@ -84,9 +91,11 @@ state SMART_BORDERS:
   enabled = 'no_gaps'
       -> call cfg_smart_borders($enabled)
 
-# smart_gaps on|off
+# smart_gaps on|off|inverse_outer
 state SMART_GAPS:
   enabled = '1', 'yes', 'true', 'on', 'enable', 'active'
+      -> call cfg_smart_gaps($enabled)
+  enabled = '0', 'no', 'false', 'off', 'disable', 'inactive'
       -> call cfg_smart_gaps($enabled)
   enabled = 'inverse_outer'
       -> call cfg_smart_gaps($enabled)
@@ -161,7 +170,7 @@ state DEFAULT_BORDER_PIXELS_PX:
   end
       -> call cfg_default_border($windowtype, $border, &width)
 
-# hide_edge_borders <none|vertical|horizontal|both|smart|no_gaps>
+# hide_edge_borders <none|vertical|horizontal|both|smart|smart_no_gaps>
 # also hide_edge_borders <bool> for compatibility
 state HIDE_EDGE_BORDERS:
   hide_borders = 'none', 'vertical', 'horizontal', 'both', 'smart_no_gaps', 'smart'
@@ -360,6 +369,18 @@ state POPUP_DURING_FULLSCREEN:
   value = 'ignore', 'leave_fullscreen', 'smart'
       -> call cfg_popup_during_fullscreen($value)
 
+state TILING_DRAG_MODE:
+  value = 'modifier', 'titlebar'
+      ->
+  end
+      -> call cfg_tiling_drag($value)
+
+state TILING_DRAG:
+  off = '0', 'no', 'false', 'off', 'disable', 'inactive'
+      -> call cfg_tiling_drag($off)
+  value = 'modifier', 'titlebar'
+      -> TILING_DRAG_MODE
+
 # client.background <hexcolor>
 state COLOR_SINGLE:
   color = word
@@ -429,8 +450,6 @@ state BINDCOMMAND:
   exclude_titlebar = '--exclude-titlebar'
       ->
   command = string
-      -> call cfg_binding($bindtype, $modifiers, $key, $release, $border, $whole_window, $exclude_titlebar, $command)
-  end
       -> call cfg_binding($bindtype, $modifiers, $key, $release, $border, $whole_window, $exclude_titlebar, $command)
 
 ################################################################################
@@ -530,6 +549,7 @@ state BAR:
   'strip_workspace_name' -> BAR_STRIP_WORKSPACE_NAME
   'verbose'                -> BAR_VERBOSE
   'height'                 -> BAR_HEIGHT
+  'padding'                -> BAR_PADDING
   'colors'                 -> BAR_COLORS_BRACE
   '}'
       -> call cfg_bar_finish(); INITIAL
@@ -598,7 +618,7 @@ state BAR_POSITION:
       -> call cfg_bar_position($position); BAR
 
 state BAR_OUTPUT:
-  output = string
+  output = word
       -> call cfg_bar_output($output); BAR
 
 state BAR_TRAY_OUTPUT:
@@ -656,6 +676,40 @@ state BAR_VERBOSE:
 state BAR_HEIGHT:
   value = number
       -> call cfg_bar_height(&value); BAR
+
+state BAR_PADDING:
+  top_or_all = number
+      -> BAR_PADDING_TOP
+
+state BAR_PADDING_TOP:
+  'px'
+      ->
+  right_or_right_and_left = number
+      -> BAR_PADDING_RIGHT
+  end
+      -> call cfg_bar_padding_one(&top_or_all); BAR
+
+state BAR_PADDING_RIGHT:
+  'px'
+      ->
+  bottom = number
+      -> BAR_PADDING_BOTTOM
+  end
+      -> call cfg_bar_padding_two(&top_or_all, &right_or_right_and_left); BAR
+
+state BAR_PADDING_BOTTOM:
+  'px'
+      ->
+  left = number
+      -> BAR_PADDING_LEFT
+  end
+      -> call cfg_bar_padding_three(&top_or_all, &right_or_right_and_left, &bottom); BAR
+
+state BAR_PADDING_LEFT:
+  'px'
+      ->
+  end
+      -> call cfg_bar_padding_four(&top_or_all, &right_or_right_and_left, &bottom, &left); BAR
 
 state BAR_COLORS_BRACE:
   end
