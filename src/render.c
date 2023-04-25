@@ -178,7 +178,7 @@ void render_con(Con *con, bool already_inset) {
             DLOG("child at (%d, %d) with (%d x %d)\n",
                  child->rect.x, child->rect.y, child->rect.width, child->rect.height);
             x_raise_con(child);
-            render_con(child);
+            render_con(child, false);
 
             /* render_con_split() sets the deco_rect width based on the rect
              * width, but the render_con() call updates the rect width by

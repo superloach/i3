@@ -490,9 +490,9 @@ void x_draw_decoration(Con *con) {
     /* find out which colors to use */
     if (con->urgent) {
         p->color = &config.client.urgent;
-    else if (focused->type == CT_WORKSPACE && desktop_window != XCB_NONE)
+    } else if (focused->type == CT_WORKSPACE && desktop_window != XCB_NONE) {
         p->color = &config.client.focused_inactive;
-    else if (con == focused || con_inside_focused(con))
+    } else if (con == focused || con_inside_focused(con)) {
         p->color = &config.client.focused;
     } else if (con == TAILQ_FIRST(&(parent->focus_head))) {
         if (config.client.got_focused_tab_title && !leaf && con_descend_focused(con) == focused) {
