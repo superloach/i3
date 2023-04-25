@@ -6,7 +6,7 @@
 project(
   'i3',
   'c',
-  version: '4.20.1',
+  version: '4.22',
   default_options: [
     'c_std=c11',
     'warning_level=1',  # enable all warnings (-Wall)
@@ -63,7 +63,7 @@ config_h = declare_dependency(
   sources: vcs_tag(
     input: config_h_in,
     output: 'config.h',
-    fallback: meson.project_version() + ' (2021-11-03)',
+    fallback: meson.project_version() + ' (2023-01-02)',
   )
 )
 
@@ -166,6 +166,7 @@ install_data(
     'docs/refcard_style.css',
     'docs/logo-30.png',
     'docs/layout-saving-1.png',
+    'docs/gaps1920.png',
   ],
   install_dir: docdir,
 )
@@ -316,7 +317,7 @@ xcb_util_xrm_dep = dependency('xcb-xrm', method: 'pkg-config')
 xkbcommon_dep = dependency('xkbcommon', method: 'pkg-config')
 xkbcommon_x11_dep = dependency('xkbcommon-x11', method: 'pkg-config')
 yajl_dep = dependency('yajl', method: 'pkg-config')
-libpcre_dep = dependency('libpcre', version: '>=8.10', method: 'pkg-config')
+libpcre_dep = dependency('libpcre2-8', version: '>=10', method: 'pkg-config')
 cairo_dep = dependency('cairo', version: '>=1.14.4', method: 'pkg-config')
 pangocairo_dep = dependency('pangocairo', method: 'pkg-config')
 glib_dep = dependency('glib-2.0', method: 'pkg-config')
@@ -389,6 +390,7 @@ i3srcs = [
   'src/ewmh.c',
   'src/fake_outputs.c',
   'src/floating.c',
+  'src/gaps.c',
   'src/handlers.c',
   'src/ipc.c',
   'src/key_press.c',
@@ -409,6 +411,7 @@ i3srcs = [
   'src/sighandler.c',
   'src/startup.c',
   'src/sync.c',
+  'src/tiling_drag.c',
   'src/tree.c',
   'src/util.c',
   'src/version.c',

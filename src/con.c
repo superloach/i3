@@ -41,7 +41,7 @@ Con *con_new_skeleton(Con *parent, i3Window *window) {
     TAILQ_INSERT_TAIL(&all_cons, new, all_cons);
     new->type = CT_CON;
     new->window = window;
-    new->border_style = config.default_border;
+    new->border_style = new->max_user_border_style = config.default_border;
     new->current_border_width = -1;
     new->window_icon_padding = -1;
     if (window) {
@@ -618,7 +618,10 @@ bool con_is_docked(Con *con) {
  *
  */
 Con *con_inside_floating(Con *con) {
-    assert(con != NULL);
+    if (con == NULL) {
+        return NULL;
+    }
+
     if (con->type == CT_FLOATING_CON)
         return con;
 
@@ -728,6 +731,41 @@ Con *con_by_mark(const char *mark) {
     }
 
     return NULL;
+}
+
+/*
+ * Start from a container and traverse the transient_for linked list. Returns
+ * true if target window is found in the list. Protects againsts potential
+ * cycles.
+ *
+ */
+bool con_find_transient_for_window(Con *start, xcb_window_t target) {
+    Con *transient_con = start;
+    int count = con_num_windows(croot);
+    while (transient_con != NULL &&
+           transient_con->window != NULL &&
+           transient_con->window->transient_for != XCB_NONE) {
+        DLOG("transient_con = 0x%08x, transient_con->window->transient_for = 0x%08x, target = 0x%08x\n",
+             transient_con->window->id, transient_con->window->transient_for, target);
+        if (transient_con->window->transient_for == target) {
+            return true;
+        }
+        Con *next_transient = con_by_window_id(transient_con->window->transient_for);
+        if (next_transient == NULL) {
+            break;
+        }
+        /* Some clients (e.g. x11-ssh-askpass) actually set WM_TRANSIENT_FOR to
+         * their own window id, so break instead of looping endlessly. */
+        if (transient_con == next_transient) {
+            break;
+        }
+        transient_con = next_transient;
+
+        if (count-- <= 0) { /* Avoid cycles, see #4404 */
+            break;
+        }
+    }
+    return false;
 }
 
 /*
@@ -852,8 +890,6 @@ void con_unmark(Con *con, const char *name) {
 Con *con_for_window(Con *con, i3Window *window, Match **store_match) {
     Con *child;
     Match *match;
-    //DLOG("searching con for window %p starting at con %p\n", window, con);
-    //DLOG("class == %s\n", window->class_class);
 
     TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
         TAILQ_FOREACH (match, &(child->swallow_head), matches) {
@@ -1012,8 +1048,8 @@ void con_fix_percent(Con *con) {
     Con *child;
     int children = con_num_children(con);
 
-    // calculate how much we have distributed and how many containers
-    // with a percentage set we have
+    /* calculate how much we have distributed and how many containers with a
+     * percentage set we have */
     double total = 0.0;
     int children_with_percent = 0;
     TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
@@ -1023,8 +1059,8 @@ void con_fix_percent(Con *con) {
         }
     }
 
-    // if there were children without a percentage set, set to a value that
-    // will make those children proportional to all others
+    /* if there were children without a percentage set, set to a value that
+     * will make those children proportional to all others */
     if (children_with_percent != children) {
         TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
             if (child->percent <= 0.0) {
@@ -1037,8 +1073,8 @@ void con_fix_percent(Con *con) {
         }
     }
 
-    // if we got a zero, just distribute the space equally, otherwise
-    // distribute according to the proportions we got
+    /* if we got a zero, just distribute the space equally, otherwise
+     * distribute according to the proportions we got */
     if (total == 0.0) {
         TAILQ_FOREACH (child, &(con->nodes_head), nodes) {
             child->percent = 1.0 / children;
@@ -1356,17 +1392,7 @@ static bool _con_move_to_con(Con *con, Con *target, bool behind_focused, bool fi
     return true;
 }
 
-/*
- * Moves the given container to the given mark.
- *
- */
-bool con_move_to_mark(Con *con, const char *mark) {
-    Con *target = con_by_mark(mark);
-    if (target == NULL) {
-        DLOG("found no container with mark \"%s\"\n", mark);
-        return false;
-    }
-
+bool con_move_to_target(Con *con, Con *target) {
     /* For target containers in the scratchpad, we just send the window to the scratchpad. */
     if (con_get_workspace(target) == workspace_get("__i3_scratch")) {
         DLOG("target container is in the scratchpad, moving container to scratchpad.\n");
@@ -1401,6 +1427,20 @@ bool con_move_to_mark(Con *con, const char *mark) {
     }
 
     return _con_move_to_con(con, target, false, true, false, false, true);
+}
+
+/*
+ * Moves the given container to the given mark.
+ *
+ */
+bool con_move_to_mark(Con *con, const char *mark) {
+    Con *target = con_by_mark(mark);
+    if (target == NULL) {
+        DLOG("found no container with mark \"%s\"\n", mark);
+        return false;
+    }
+
+    return con_move_to_target(con, target);
 }
 
 /*
@@ -1659,12 +1699,20 @@ static bool has_outer_gaps(gaps_t gaps) {
 }
 
 /*
- * Returns a "relative" Rect which contains the amount of pixels that need to
- * be added to the original Rect to get the final position (obviously the
- * amount of pixels for normal, 1pixel and borderless are different).
+ * Returns whether the window decoration (title bar) should be drawn into the
+ * X11 frame window of this container (default) or into the X11 frame window of
+ * the parent container (for stacked/tabbed containers).
  *
  */
-Rect con_border_style_rect(Con *con) {
+bool con_draw_decoration_into_frame(Con *con) {
+    return con_is_leaf(con) &&
+           con_border_style(con) == BS_NORMAL &&
+           (con->parent == NULL ||
+            (con->parent->layout != L_TABBED &&
+             con->parent->layout != L_STACKED));
+}
+
+static Rect con_border_style_rect_without_title(Con *con) {
     if ((config.smart_borders == SMART_BORDERS_ON && con_num_visible_children(con_get_workspace(con)) <= 1) ||
         (config.smart_borders == SMART_BORDERS_NO_GAPS && !has_outer_gaps(calculate_effective_gaps(con))) ||
         (config.hide_edge_borders == HEBM_SMART && con_num_visible_children(con_get_workspace(con)) <= 1) ||
@@ -1720,6 +1768,23 @@ Rect con_border_style_rect(Con *con) {
 }
 
 /*
+ * Returns a "relative" Rect which contains the amount of pixels that need to
+ * be added to the original Rect to get the final position (obviously the
+ * amount of pixels for normal, 1pixel and borderless are different).
+ *
+ */
+Rect con_border_style_rect(Con *con) {
+    Rect result = con_border_style_rect_without_title(con);
+    if (con_border_style(con) == BS_NORMAL &&
+        con_draw_decoration_into_frame(con)) {
+        const int deco_height = render_deco_height();
+        result.y += deco_height;
+        result.height -= deco_height;
+    }
+    return result;
+}
+
+/*
  * Returns adjacent borders of the window. We need this if hide_edge_borders is
  * enabled.
  */
@@ -1758,14 +1823,19 @@ int con_border_style(Con *con) {
         return BS_NONE;
     }
 
-    if (con->parent->layout == L_STACKED)
-        return (con_num_children(con->parent) == 1 ? con->border_style : BS_NORMAL);
+    if (con->parent != NULL) {
+        if (con->parent->layout == L_STACKED) {
+            return (con_num_children(con->parent) == 1 ? con->border_style : BS_NORMAL);
+        }
 
-    if (con->parent->layout == L_TABBED && con->border_style != BS_NORMAL)
-        return (con_num_children(con->parent) == 1 ? con->border_style : BS_NORMAL);
+        if (con->parent->layout == L_TABBED && con->border_style != BS_NORMAL) {
+            return (con_num_children(con->parent) == 1 ? con->border_style : BS_NORMAL);
+        }
 
-    if (con->parent->type == CT_DOCKAREA)
-        return BS_NONE;
+        if (con->parent->type == CT_DOCKAREA) {
+            return BS_NONE;
+        }
+    }
 
     return con->border_style;
 }
@@ -1775,7 +1845,11 @@ int con_border_style(Con *con) {
  * floating window.
  *
  */
-void con_set_border_style(Con *con, int border_style, int border_width) {
+void con_set_border_style(Con *con, border_style_t border_style, int border_width) {
+    if (border_style > con->max_user_border_style) {
+        border_style = con->max_user_border_style;
+    }
+
     /* Handle the simple case: non-floating containerns */
     if (!con_is_floating(con)) {
         con->border_style = border_style;
@@ -1788,27 +1862,19 @@ void con_set_border_style(Con *con, int border_style, int border_width) {
      * con->rect represent the absolute position of the window (same for
      * parent). Then, we change the border style and subtract the new border
      * pixels. For the parent, we do the same also for the decoration. */
-    DLOG("This is a floating container\n");
-
     Con *parent = con->parent;
     Rect bsr = con_border_style_rect(con);
-    int deco_height = (con->border_style == BS_NORMAL ? render_deco_height() : 0);
 
     con->rect = rect_add(con->rect, bsr);
     parent->rect = rect_add(parent->rect, bsr);
-    parent->rect.y += deco_height;
-    parent->rect.height -= deco_height;
 
     /* Change the border style, get new border/decoration values. */
     con->border_style = border_style;
     con->current_border_width = border_width;
     bsr = con_border_style_rect(con);
-    deco_height = (con->border_style == BS_NORMAL ? render_deco_height() : 0);
 
     con->rect = rect_sub(con->rect, bsr);
     parent->rect = rect_sub(parent->rect, bsr);
-    parent->rect.y -= deco_height;
-    parent->rect.height += deco_height;
 }
 
 /*
@@ -2220,7 +2286,6 @@ void con_set_urgency(Con *con, bool urgent) {
     } else
         DLOG("Discarding urgency WM_HINT because timer is running\n");
 
-    //CLIENT_LOG(con);
     if (con->window) {
         if (con->urgent) {
             gettimeofday(&con->window->urgent, NULL);
@@ -2558,4 +2623,19 @@ void con_merge_into(Con *old, Con *new) {
     TAILQ_INIT(&(old->marks_head));
 
     tree_close_internal(old, DONT_KILL_WINDOW, false);
+}
+
+/*
+ * Returns true if the container is within any stacked/tabbed split container.
+ *
+ */
+bool con_inside_stacked_or_tabbed(Con *con) {
+    if (con->parent == NULL) {
+        return false;
+    }
+    if (con->parent->layout == L_STACKED ||
+        con->parent->layout == L_TABBED) {
+        return true;
+    }
+    return con_inside_stacked_or_tabbed(con->parent);
 }

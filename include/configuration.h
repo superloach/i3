@@ -14,6 +14,7 @@
 
 #include "queue.h"
 #include "i3.h"
+#include "tiling_drag.h"
 
 typedef struct IncludedFile IncludedFile;
 typedef struct Config Config;
@@ -238,9 +239,11 @@ struct Config {
         color_t background;
         struct Colortriple focused;
         struct Colortriple focused_inactive;
+        struct Colortriple focused_tab_title;
         struct Colortriple unfocused;
         struct Colortriple urgent;
         struct Colortriple placeholder;
+        bool got_focused_tab_title;
     } client;
     struct config_bar {
         struct Colortriple focused;
@@ -263,6 +266,8 @@ struct Config {
 
     /* The number of currently parsed barconfigs */
     int number_barconfigs;
+
+    tiling_drag_t tiling_drag;
 
     /* Gap sizes */
     gaps_t gaps;
@@ -361,6 +366,8 @@ struct Barconfig {
 
     /** Defines the height of the bar in pixels. */
     uint32_t bar_height;
+
+    struct Rect padding;
 
     struct bar_colors {
         char *background;

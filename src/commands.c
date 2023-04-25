@@ -747,6 +747,8 @@ void cmd_border(I3_CMD, const char *border_style_str, long border_width) {
             return;
         }
 
+        /* User changed the border */
+        current->con->max_user_border_style = border_style;
         const int con_border_width = border_width_from_style(border_style, border_width, current->con);
         con_set_border_style(current->con, border_style, con_border_width);
     }
@@ -1023,6 +1025,81 @@ void cmd_mode(I3_CMD, const char *mode) {
     ysuccess(true);
 }
 
+typedef struct user_output_name {
+    char *name;
+    TAILQ_ENTRY(user_output_name) user_output_names;
+} user_output_name;
+typedef TAILQ_HEAD(user_output_names_head, user_output_name) user_output_names_head;
+
+static void user_output_names_add(user_output_names_head *list, const char *name) {
+    const bool get_non_primary = (strcasecmp("nonprimary", name) == 0);
+    if (get_non_primary || strcmp(name, "next") == 0) {
+        /* "next" (or "nonprimary") here work like a wildcard: It "expands" to
+         * all available (or non-primary) outputs. */
+        Output *output;
+        TAILQ_FOREACH (output, &outputs, outputs) {
+            if (get_non_primary && output->primary) {
+                continue;
+            }
+
+            user_output_name *co = scalloc(sizeof(user_output_name), 1);
+            co->name = sstrdup(output_primary_name(output));
+            TAILQ_INSERT_TAIL(list, co, user_output_names);
+        }
+        return;
+    }
+
+    user_output_name *co = scalloc(sizeof(user_output_name), 1);
+    co->name = sstrdup(name);
+    TAILQ_INSERT_TAIL(list, co, user_output_names);
+    return;
+}
+
+static Output *user_output_names_find_next(user_output_names_head *names, Output *current_output) {
+    Output *target_output = NULL;
+    user_output_name *uo;
+    TAILQ_FOREACH (uo, names, user_output_names) {
+        if (!target_output) {
+            /* The first available output from the list is used in 2 cases:
+             * 1. When we must wrap around the user list. For example, if user
+             * specifies outputs A B C and C is `current_output`.
+             * 2. When the current output is not in the user list. For example,
+             * user specifies A B C and D is `current_output`. */
+            target_output = get_output_from_string(current_output, uo->name);
+        }
+        if (strcasecmp(output_primary_name(current_output), uo->name) == 0) {
+            /* The current output is in the user list */
+            while (true) {
+                /* This corrupts the outer loop but it is ok since we are going
+                 * to break anyway. */
+                uo = TAILQ_NEXT(uo, user_output_names);
+                if (!uo) {
+                    /* We reached the end of the list. We should use the first
+                     * available output that, if it exists, is already saved in
+                     * target_output. */
+                    break;
+                }
+                Output *out = get_output_from_string(current_output, uo->name);
+                if (out) {
+                    return out;
+                }
+            }
+            break;
+        }
+    }
+    return target_output;
+}
+
+static void user_output_names_free(user_output_names_head *names) {
+    user_output_name *uo;
+    while (!TAILQ_EMPTY(names)) {
+        uo = TAILQ_FIRST(names);
+        free(uo->name);
+        TAILQ_REMOVE(names, uo, user_output_names);
+        free(uo);
+    }
+}
+
 /*
  * Implementation of 'move [window|container|workspace] [to] output <strings>'.
  *
@@ -1031,40 +1108,21 @@ void cmd_move_con_to_output(I3_CMD, const char *name, bool move_workspace) {
     /* Initialize a data structure that is used to save multiple user-specified
      * output names since this function is called multiple types for each
      * command call. */
-    typedef struct user_output_name {
-        char *name;
-        TAILQ_ENTRY(user_output_name) user_output_names;
-    } user_output_name;
-    static TAILQ_HEAD(user_output_names_head, user_output_name) user_output_names = TAILQ_HEAD_INITIALIZER(user_output_names);
+    static user_output_names_head names = TAILQ_HEAD_INITIALIZER(names);
 
     if (name) {
-        if (strcmp(name, "next") == 0) {
-            /* "next" here works like a wildcard: It "expands" to all available
-             * outputs. */
-            Output *output;
-            TAILQ_FOREACH (output, &outputs, outputs) {
-                user_output_name *co = scalloc(sizeof(user_output_name), 1);
-                co->name = sstrdup(output_primary_name(output));
-                TAILQ_INSERT_TAIL(&user_output_names, co, user_output_names);
-            }
-            return;
-        }
-
-        user_output_name *co = scalloc(sizeof(user_output_name), 1);
-        co->name = sstrdup(name);
-        TAILQ_INSERT_TAIL(&user_output_names, co, user_output_names);
+        user_output_names_add(&names, name);
         return;
     }
 
     HANDLE_EMPTY_MATCH;
 
-    if (TAILQ_EMPTY(&user_output_names)) {
+    if (TAILQ_EMPTY(&names)) {
         yerror("At least one output must be specified");
         return;
     }
 
     bool success = false;
-    user_output_name *uo;
     owindow *current;
     TAILQ_FOREACH (current, &owindows, owindows) {
         Con *ws = con_get_workspace(current->con);
@@ -1073,41 +1131,7 @@ void cmd_move_con_to_output(I3_CMD, const char *name, bool move_workspace) {
         }
 
         Output *current_output = get_output_for_con(ws);
-
-        Output *target_output = NULL;
-        TAILQ_FOREACH (uo, &user_output_names, user_output_names) {
-            if (strcasecmp(output_primary_name(current_output), uo->name) == 0) {
-                /* The current output is in the user list */
-                while (true) {
-                    /* This corrupts the outer loop but it is ok since we are
-                     * going to break anyway. */
-                    uo = TAILQ_NEXT(uo, user_output_names);
-                    if (!uo) {
-                        /* We reached the end of the list. We should use the
-                         * first available output that, if it exists, is
-                         * already saved in target_output. */
-                        break;
-                    }
-                    Output *out = get_output_from_string(current_output, uo->name);
-                    if (out) {
-                        DLOG("Found next target for workspace %s from user list: %s\n", ws->name, uo->name);
-                        target_output = out;
-                        break;
-                    }
-                }
-                break;
-            }
-            if (!target_output) {
-                /* The first available output from the list is used in 2 cases:
-                 * 1. When we must wrap around the user list. For example, if
-                 * user specifies outputs A B C and C is `current_output`.
-                 * 2. When the current output is not in the user list. For
-                 * example, user specifies A B C and D is `current_output`.
-                 */
-                DLOG("Found first target for workspace %s from user list: %s\n", ws->name, uo->name);
-                target_output = get_output_from_string(current_output, uo->name);
-            }
-        }
+        Output *target_output = user_output_names_find_next(&names, current_output);
         if (target_output) {
             if (move_workspace) {
                 workspace_move_to_output(ws, target_output);
@@ -1117,13 +1141,7 @@ void cmd_move_con_to_output(I3_CMD, const char *name, bool move_workspace) {
             success = true;
         }
     }
-
-    while (!TAILQ_EMPTY(&user_output_names)) {
-        uo = TAILQ_FIRST(&user_output_names);
-        free(uo->name);
-        TAILQ_REMOVE(&user_output_names, uo, user_output_names);
-        free(uo);
-    }
+    user_output_names_free(&names);
 
     cmd_output->needs_tree_render = success;
     if (success) {
@@ -1765,6 +1783,17 @@ void cmd_open(I3_CMD) {
  *
  */
 void cmd_focus_output(I3_CMD, const char *name) {
+    static user_output_names_head names = TAILQ_HEAD_INITIALIZER(names);
+    if (name) {
+        user_output_names_add(&names, name);
+        return;
+    }
+
+    if (TAILQ_EMPTY(&names)) {
+        yerror("At least one output must be specified");
+        return;
+    }
+
     HANDLE_EMPTY_MATCH;
 
     if (TAILQ_EMPTY(&owindows)) {
@@ -1773,25 +1802,29 @@ void cmd_focus_output(I3_CMD, const char *name) {
     }
 
     Output *current_output = get_output_for_con(TAILQ_FIRST(&owindows)->con);
-    Output *output = get_output_from_string(current_output, name);
+    Output *target_output = user_output_names_find_next(&names, current_output);
+    user_output_names_free(&names);
+    bool success = false;
+    if (target_output) {
+        success = true;
 
-    if (!output) {
-        yerror("Output %s not found.", name);
-        return;
+        /* get visible workspace on output */
+        Con *ws = NULL;
+        GREP_FIRST(ws, output_get_content(target_output->con), workspace_is_visible(child));
+        if (!ws) {
+            yerror("BUG: No workspace found on output.");
+            return;
+        }
+
+        workspace_show(ws);
     }
 
-    /* get visible workspace on output */
-    Con *ws = NULL;
-    GREP_FIRST(ws, output_get_content(output->con), workspace_is_visible(child));
-    if (!ws) {
-        yerror("BUG: No workspace found on output.");
-        return;
+    cmd_output->needs_tree_render = success;
+    if (success) {
+        ysuccess(true);
+    } else {
+        yerror("No output matched");
     }
-
-    workspace_show(ws);
-
-    cmd_output->needs_tree_render = true;
-    ysuccess(true);
 }
 
 /*
@@ -2046,20 +2079,40 @@ void cmd_title_format(I3_CMD, const char *format) {
 }
 
 /*
- * Implementation of 'title_window_icon <yes|no>' and 'title_window_icon padding <px>'
+ * Implementation of 'title_window_icon <yes|no|toggle>' and 'title_window_icon padding <px>'
  *
  */
 void cmd_title_window_icon(I3_CMD, const char *enable, int padding) {
-    if (enable != NULL && !boolstr(enable)) {
-        padding = -1;
+    bool is_toggle = false;
+    if (enable != NULL) {
+        if (strcmp(enable, "toggle") == 0) {
+            is_toggle = true;
+        } else if (!boolstr(enable)) {
+            padding = -1;
+        }
     }
     DLOG("setting window_icon=%d\n", padding);
     HANDLE_EMPTY_MATCH;
 
     owindow *current;
     TAILQ_FOREACH (current, &owindows, owindows) {
-        DLOG("setting window_icon for %p / %s\n", current->con, current->con->name);
-        current->con->window_icon_padding = padding;
+        if (is_toggle) {
+            const int current_padding = current->con->window_icon_padding;
+            if (padding > 0) {
+                if (current_padding < 0) {
+                    current->con->window_icon_padding = padding;
+                } else {
+                    /* toggle off, but store padding given */
+                    current->con->window_icon_padding = -(padding + 1);
+                }
+            } else {
+                /* Set to negative of (current value+1) to keep old padding when toggling */
+                current->con->window_icon_padding = -(current_padding + 1);
+            }
+        } else {
+            current->con->window_icon_padding = padding;
+        }
+        DLOG("Set window_icon for %p / %s to %d\n", current->con, current->con->name, current->con->window_icon_padding);
 
         if (current->con->window != NULL) {
             /* Make sure the window title is redrawn immediately. */
@@ -2335,114 +2388,170 @@ void cmd_debuglog(I3_CMD, const char *argument) {
     ysuccess(true);
 }
 
+static int *gaps_inner(gaps_t *gaps) {
+    return &(gaps->inner);
+}
+
+static int *gaps_top(gaps_t *gaps) {
+    return &(gaps->top);
+}
+
+static int *gaps_left(gaps_t *gaps) {
+    return &(gaps->left);
+}
+
+static int *gaps_bottom(gaps_t *gaps) {
+    return &(gaps->bottom);
+}
+
+static int *gaps_right(gaps_t *gaps) {
+    return &(gaps->right);
+}
+
+typedef int *(*gap_accessor)(gaps_t *);
+
+static bool gaps_update(gap_accessor get, const char *scope, const char *mode, int pixels) {
+    DLOG("gaps_update(scope=%s, mode=%s, pixels=%d)\n", scope, mode, pixels);
+    Con *workspace = con_get_workspace(focused);
+
+    const int global_gap_size = *get(&(config.gaps));
+    int current_value = global_gap_size;
+    if (strcmp(scope, "current") == 0) {
+        current_value += *get(&(workspace->gaps));
+    }
+    DLOG("global_gap_size=%d, current_value=%d\n", global_gap_size, current_value);
+
+    bool reset = false;
+    if (strcmp(mode, "plus") == 0)
+        current_value += pixels;
+    else if (strcmp(mode, "minus") == 0)
+        current_value -= pixels;
+    else if (strcmp(mode, "set") == 0) {
+        current_value = pixels;
+        reset = true;
+    } else if (strcmp(mode, "toggle") == 0) {
+        current_value = !current_value * pixels;
+        reset = true;
+    } else {
+        ELOG("Invalid mode %s when changing gaps", mode);
+        return false;
+    }
+
+    /* See https://github.com/Airblader/i3/issues/262 */
+    int min_value = 0;
+    const bool is_outer = get(&(config.gaps)) != gaps_inner(&(config.gaps));
+    if (is_outer) {
+        /* Outer gaps can compensate inner gaps. */
+        if (strcmp(scope, "all") == 0) {
+            min_value = -config.gaps.inner;
+        } else {
+            min_value = -config.gaps.inner - workspace->gaps.inner;
+        }
+    }
+
+    if (current_value < min_value) {
+        current_value = min_value;
+    }
+
+    if (strcmp(scope, "all") == 0) {
+        Con *output = NULL;
+        TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {
+            Con *cur_ws = NULL;
+            Con *content = output_get_content(output);
+            TAILQ_FOREACH (cur_ws, &(content->nodes_head), nodes) {
+                int *gaps_value = get(&(cur_ws->gaps));
+                DLOG("current gaps_value = %d\n", *gaps_value);
+
+                if (reset) {
+                    *gaps_value = 0;
+                } else {
+                    int max_compensate = 0;
+                    if (is_outer) {
+                        max_compensate = config.gaps.inner;
+                    }
+                    if (*gaps_value + current_value + max_compensate < 0) {
+                        /* Enforce new per-workspace gap size minimum value (in case
+                           current_value is smaller than before): the workspace can at most
+                           have a negative gap size of -current_value - max_compensate. */
+                        *gaps_value = -current_value - max_compensate;
+                    }
+                }
+                DLOG("gaps_value after fix = %d\n", *gaps_value);
+            }
+        }
+
+        *get(&(config.gaps)) = current_value;
+        DLOG("global gaps value after fix = %d\n", *get(&(config.gaps)));
+    } else {
+        int *gaps_value = get(&(workspace->gaps));
+        *gaps_value = current_value - global_gap_size;
+    }
+
+    return true;
+}
+
 /**
  * Implementation of 'gaps inner|outer|top|right|bottom|left|horizontal|vertical current|all set|plus|minus|toggle <px>'
  *
  */
 void cmd_gaps(I3_CMD, const char *type, const char *scope, const char *mode, const char *value) {
     int pixels = logical_px(atoi(value));
-    Con *workspace = con_get_workspace(focused);
-
-#define CMD_SET_GAPS_VALUE(type, value, reset)                          \
-    do {                                                                \
-        if (!strcmp(scope, "all")) {                                    \
-            Con *output, *cur_ws = NULL;                                \
-            TAILQ_FOREACH (output, &(croot->nodes_head), nodes) {       \
-                Con *content = output_get_content(output);              \
-                TAILQ_FOREACH (cur_ws, &(content->nodes_head), nodes) { \
-                    if (reset)                                          \
-                        cur_ws->gaps.type = 0;                          \
-                    else if (value + cur_ws->gaps.type < 0)             \
-                        cur_ws->gaps.type = -value;                     \
-                }                                                       \
-            }                                                           \
-                                                                        \
-            config.gaps.type = value;                                   \
-        } else {                                                        \
-            workspace->gaps.type = value - config.gaps.type;            \
-        }                                                               \
-    } while (0)
-
-#define CMD_GAPS(type)                                                                                          \
-    do {                                                                                                        \
-        int current_value = config.gaps.type;                                                                   \
-        if (strcmp(scope, "current") == 0)                                                                      \
-            current_value += workspace->gaps.type;                                                              \
-                                                                                                                \
-        bool reset = false;                                                                                     \
-        if (!strcmp(mode, "plus"))                                                                              \
-            current_value += pixels;                                                                            \
-        else if (!strcmp(mode, "minus"))                                                                        \
-            current_value -= pixels;                                                                            \
-        else if (!strcmp(mode, "set")) {                                                                        \
-            current_value = pixels;                                                                             \
-            reset = true;                                                                                       \
-        } else if (!strcmp(mode, "toggle")) {                                                                   \
-            current_value = !current_value * pixels;                                                            \
-            reset = true;                                                                                       \
-        } else {                                                                                                \
-            ELOG("Invalid mode %s when changing gaps", mode);                                                   \
-            ysuccess(false);                                                                                    \
-            return;                                                                                             \
-        }                                                                                                       \
-                                                                                                                \
-        /* see issue 262 */                                                                                     \
-        int min_value = 0;                                                                                      \
-        if (strcmp(#type, "inner") != 0) {                                                                      \
-            min_value = strcmp(scope, "all") ? -config.gaps.inner - workspace->gaps.inner : -config.gaps.inner; \
-        }                                                                                                       \
-                                                                                                                \
-        if (current_value < min_value)                                                                          \
-            current_value = min_value;                                                                          \
-                                                                                                                \
-        CMD_SET_GAPS_VALUE(type, current_value, reset);                                                         \
-    } while (0)
-
-#define CMD_UPDATE_GAPS(type)                                                                              \
-    do {                                                                                                   \
-        if (!strcmp(scope, "all")) {                                                                       \
-            if (config.gaps.type + config.gaps.inner < 0)                                                  \
-                CMD_SET_GAPS_VALUE(type, -config.gaps.inner, true);                                        \
-        } else {                                                                                           \
-            if (config.gaps.type + workspace->gaps.type + config.gaps.inner + workspace->gaps.inner < 0) { \
-                CMD_SET_GAPS_VALUE(type, -config.gaps.inner - workspace->gaps.inner, true);                \
-            }                                                                                              \
-        }                                                                                                  \
-    } while (0)
 
     if (!strcmp(type, "inner")) {
-        CMD_GAPS(inner);
-        // update inconsistent values
-        CMD_UPDATE_GAPS(top);
-        CMD_UPDATE_GAPS(bottom);
-        CMD_UPDATE_GAPS(right);
-        CMD_UPDATE_GAPS(left);
+        if (!gaps_update(gaps_inner, scope, mode, pixels)) {
+            goto error;
+        }
+        /* Update all workspaces with a no-op change (plus 0) so that the
+         * minimum value is re-calculated and applied as a side effect. */
+        if (!gaps_update(gaps_top, "all", "plus", 0) ||
+            !gaps_update(gaps_bottom, "all", "plus", 0) ||
+            !gaps_update(gaps_right, "all", "plus", 0) ||
+            !gaps_update(gaps_left, "all", "plus", 0)) {
+            goto error;
+        }
     } else if (!strcmp(type, "outer")) {
-        CMD_GAPS(top);
-        CMD_GAPS(bottom);
-        CMD_GAPS(right);
-        CMD_GAPS(left);
+        if (!gaps_update(gaps_top, scope, mode, pixels) ||
+            !gaps_update(gaps_bottom, scope, mode, pixels) ||
+            !gaps_update(gaps_right, scope, mode, pixels) ||
+            !gaps_update(gaps_left, scope, mode, pixels)) {
+            goto error;
+        }
     } else if (!strcmp(type, "vertical")) {
-        CMD_GAPS(top);
-        CMD_GAPS(bottom);
+        if (!gaps_update(gaps_top, scope, mode, pixels) ||
+            !gaps_update(gaps_bottom, scope, mode, pixels)) {
+            goto error;
+        }
     } else if (!strcmp(type, "horizontal")) {
-        CMD_GAPS(right);
-        CMD_GAPS(left);
+        if (!gaps_update(gaps_right, scope, mode, pixels) ||
+            !gaps_update(gaps_left, scope, mode, pixels)) {
+            goto error;
+        }
     } else if (!strcmp(type, "top")) {
-        CMD_GAPS(top);
+        if (!gaps_update(gaps_top, scope, mode, pixels)) {
+            goto error;
+        }
     } else if (!strcmp(type, "bottom")) {
-        CMD_GAPS(bottom);
+        if (!gaps_update(gaps_bottom, scope, mode, pixels)) {
+            goto error;
+        }
     } else if (!strcmp(type, "right")) {
-        CMD_GAPS(right);
+        if (!gaps_update(gaps_right, scope, mode, pixels)) {
+            goto error;
+        }
     } else if (!strcmp(type, "left")) {
-        CMD_GAPS(left);
+        if (!gaps_update(gaps_left, scope, mode, pixels)) {
+            goto error;
+        }
     } else {
         ELOG("Invalid type %s when changing gaps", type);
-        ysuccess(false);
-        return;
+        goto error;
     }
 
     cmd_output->needs_tree_render = true;
     // XXX: default reply for now, make this a better reply
     ysuccess(true);
+    return;
+
+error:
+    ysuccess(false);
 }

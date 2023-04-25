@@ -476,16 +476,18 @@ is(parser_calls($config),
 ################################################################################
 
 $config = <<'EOT';
-client.focused          #4c7899 #285577 #ffffff #2e9ef4 #b34d4c
-client.focused_inactive #333333 #5f676a #ffffff #484e50
-client.unfocused        #333333 #222222 #888888 #292d2e
-client.urgent           #2f343a #900000 #ffffff #900000 #c00000
-client.placeholder      #000000 #0c0c0c #ffffff #000000
+client.focused           #4c7899 #285577 #ffffff #2e9ef4 #b34d4c
+client.focused_inactive  #333333 #5f676a #ffffff #484e50
+client.focused_tab_title #444444 #555555 #ffffff
+client.unfocused         #333333 #222222 #888888 #292d2e
+client.urgent            #2f343a #900000 #ffffff #900000 #c00000
+client.placeholder       #000000 #0c0c0c #ffffff #000000
 EOT
 
 $expected = <<'EOT';
 cfg_color(client.focused, #4c7899, #285577, #ffffff, #2e9ef4, #b34d4c)
 cfg_color(client.focused_inactive, #333333, #5f676a, #ffffff, #484e50, NULL)
+cfg_color(client.focused_tab_title, #444444, #555555, #ffffff, NULL, NULL)
 cfg_color(client.unfocused, #333333, #222222, #888888, #292d2e, NULL)
 cfg_color(client.urgent, #2f343a, #900000, #ffffff, #900000, #c00000)
 cfg_color(client.placeholder, #000000, #0c0c0c, #ffffff, #000000, NULL)
@@ -550,10 +552,12 @@ my $expected_all_tokens = "ERROR: CONFIG: Expected one of these tokens: <end>, '
         ipc_kill_timeout
         restart_state
         popup_during_fullscreen
+	tiling_drag
         exec_always
         exec
         client.background
         client.focused_inactive
+        client.focused_tab_title
         client.focused
         client.unfocused
         client.urgent
@@ -772,7 +776,7 @@ EOT
 $expected = <<'EOT';
 cfg_bar_start()
 cfg_bar_output(LVDS-1)
-ERROR: CONFIG: Expected one of these tokens: <end>, '#', 'set', 'i3bar_command', 'status_command', 'socket_path', 'mode', 'hidden_state', 'id', 'modifier', 'wheel_up_cmd', 'wheel_down_cmd', 'bindsym', 'position', 'output', 'tray_output', 'tray_padding', 'font', 'separator_symbol', 'binding_mode_indicator', 'workspace_buttons', 'workspace_min_width', 'strip_workspace_numbers', 'strip_workspace_name', 'verbose', 'height', 'colors', '}'
+ERROR: CONFIG: Expected one of these tokens: <end>, '#', 'set', 'i3bar_command', 'status_command', 'socket_path', 'mode', 'hidden_state', 'id', 'modifier', 'wheel_up_cmd', 'wheel_down_cmd', 'bindsym', 'position', 'output', 'tray_output', 'tray_padding', 'font', 'separator_symbol', 'binding_mode_indicator', 'workspace_buttons', 'workspace_min_width', 'strip_workspace_numbers', 'strip_workspace_name', 'verbose', 'height', 'padding', 'colors', '}'
 ERROR: CONFIG: (in file <stdin>)
 ERROR: CONFIG: Line   1: bar {
 ERROR: CONFIG: Line   2:     output LVDS-1
